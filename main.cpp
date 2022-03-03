@@ -55,7 +55,7 @@ char* rand_bytes(size_t size)
 	return data;
 }
 
-void* flood_thread(void* arg)
+void* flood_thread(void*)
 {
 	::srandom(::time(nullptr));
 	for (size_t i = 0; i < amplifier; ++i)
@@ -99,7 +99,7 @@ int main(int argc, char** argv)
 			case 'm':
 			{
 				method = std::string(optarg);
-				for (char& i: method) i = std::tolower(i);
+				for (char& i: method) i = std::toupper(i);
 				break;
 			}
 			
