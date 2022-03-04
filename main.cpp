@@ -226,6 +226,8 @@ int main(int argc, char** argv)
 					data = new char[st.st_size + 1];
 					size_t read = ::fread(data, sizeof(char), st.st_size, file);
 					data[read] = 0;
+					std::cout << COLOR_GREEN << "Successfully read Data from file \"" << data_file << "\"." COLOR_RESET "\n";
+					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data <<  COLOR_MAGENTA ")\"\n";
 				}
 				else
 				{
