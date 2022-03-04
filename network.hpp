@@ -29,7 +29,7 @@ namespace net
 		inline static consteval size_t consteval_strlen(const char* str)
 		{
 			size_t size = 0;
-			for (; *str; ++str);
+			for (; *str; ++str, ++size);
 			return size;
 		}
 		
@@ -134,7 +134,7 @@ namespace net
 			else if (__address.starts_with("socks5://") || __address.starts_with("socks4://"))
 			{
 				port = 1080;
-				__address.erase(__address.begin(), __address.begin() + __detail__::constexpr_strlen("socks5://"));
+				__address.erase(__address.begin(), __address.begin() + __detail__::consteval_strlen("socks5://"));
 			}
 			else if (__address.starts_with("web://"))
 			{
