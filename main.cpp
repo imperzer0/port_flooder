@@ -84,7 +84,7 @@ void* flood_thread(void*)
 		if ((method == "UDP" || method == "udp") && !proxy_address)
 		{
 			method = "UDP";
-			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
+			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), debug);
 			::pthread_mutex_lock(&mutex);
 			if (flood)
 				++sent_requests;

