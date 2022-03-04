@@ -9,35 +9,45 @@ Port flooding application (for Linux)
  - Can send not just random data but also data from <b>file</b>
  - Can use proxy (now it's just for TCP)
 
+# Dependencies
+
+```less
+git
+cmake>=3
+make
+g++
+```
+
 # Use
 
 To download install git on your machine and type:
-```
+```bash
 git clone https://github.com/imperzer0/port_flooder.git
 ```
 
-#Archlinux
+<h2>Archlinux</h2>
 
-```
+```bash
 cd port_flooder
 makepkg -sif
 ```
 
-#Other distributions
+<h2>Other distributions</h2>
 
 Compile:
-```
+```bash
 cd port_flooder
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ .
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DPACKAGE_VERSION="port-flooder (GIT)" .
+make
 ```
 
-Run with commant:
-```
+Run with command:
+```less
 ./port_flooder -m <method> -t <target> -T <threads_count> -a <amplifier> [ -d <file> -D -p <proxy_address> -s <sock_version> -U <username> -P <password> ]
 ```
 
 Program arguments description:
-```
+```less
 Options:
  --method|-m        <method>    ddos method
  --target|-t        <target>    target address
