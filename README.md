@@ -1,11 +1,11 @@
-# port_flooder
-port flooding application (linux)
+# Port Flooder
+Port flooding application (for Linux)
 
-# methods
+# Methods
  - TCP (with proxy)
  - UDP (no proxy)
 
-# features
+# Features
  - Can send not just random data but also data from <b>file</b>
  - Can use proxy (now it's just for TCP)
 
@@ -15,6 +15,15 @@ To download install git on your machine and type:
 ```
 git clone https://github.com/imperzer0/port_flooder.git
 ```
+
+# Archlinux
+
+```
+cd port_flooder
+makepkg -sif
+```
+
+# Other distributions
 
 Compile:
 ```
