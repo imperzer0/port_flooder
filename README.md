@@ -16,14 +16,14 @@ To download install git on your machine and type:
 git clone https://github.com/imperzer0/port_flooder.git
 ```
 
-# Archlinux
+#Archlinux
 
 ```
 cd port_flooder
 makepkg -sif
 ```
 
-# Other distributions
+#Other distributions
 
 Compile:
 ```
