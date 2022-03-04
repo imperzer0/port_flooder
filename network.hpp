@@ -257,8 +257,7 @@ namespace net
 		inline udp_flood(const inet_address& address, const std::string& data, bool debug = false)
 				: address(address), socket(::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))
 		{
-			if (status &&
-				::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
+			if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 				status = false;
 
 //			::sleep(1);
