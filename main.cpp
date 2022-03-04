@@ -26,7 +26,8 @@
              "                                 - SOCKS5\n"                                                                                  \
              "                                 - WEB\n"                                                                                     \
              " --proxyuser|-U     <user>      proxy username\n"                                                                             \
-             " --proxypassword|-P <password>  password of proxy user" COLOR_RESET "\n"
+             " --proxypassword|-P <password>  password of proxy user\n"                                                                     \
+             " --version|-v                   print version info" COLOR_RESET "\n"
 
 #define REPORT_FMT COLOR_RESET "Attacking " COLOR_INTENSE COLOR_BLUE "%s" COLOR_WHITE ":" COLOR_YELLOW "%hu" COLOR_RESET " | method " COLOR_MAGENTA \
         "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | running threads %d\n"
@@ -193,6 +194,12 @@ int main(int argc, char** argv)
 				break;
 			}
 			
+			case 'v':
+			{
+				::printf("Version: " COLOR_MAGENTA VERSION COLOR_RESET ".\nBinary file path: \"%s\".\n", appname);
+				break;
+			}
+			
 			default: // '?'
 			{
 				::printf(HELP, appname);
@@ -227,7 +234,7 @@ int main(int argc, char** argv)
 					size_t read = ::fread(data, sizeof(char), st.st_size, file);
 					data[read] = 0;
 					std::cout << COLOR_GREEN << "Successfully read Data from file \"" << data_file << "\"." COLOR_RESET "\n";
-					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data <<  COLOR_MAGENTA ")\"\n";
+					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data << COLOR_MAGENTA ")\"\n";
 				}
 				else
 				{

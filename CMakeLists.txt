@@ -3,4 +3,6 @@ project(port_flooder)
 
 set(CMAKE_CXX_STANDARD 20)
 
+add_compile_definitions(VERSION="${PACKAGE_VERSION}")
+
 add_executable(port_flooder main.cpp)
