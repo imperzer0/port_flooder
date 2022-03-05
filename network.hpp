@@ -12,11 +12,12 @@
 #include <unistd.h>
 #include <memory>
 #include <netdb.h>
+#include <netinet/tcp.h>
 
 #include "proxysocks.hpp"
 #include "color.hpp"
 
-#define MAX_QUERIES 2048
+#define MAX_QUERIES 4
 #define PROXY_CONNECT "CONNECT"
 #define PROXY_CONNECT_SIZE ::net::__detail__::consteval_strlen(PROXY_CONNECT)
 #define ADDRESS_MAX_LEN ::net::__detail__::consteval_strlen("255.255.255.255:65535")
@@ -64,6 +65,18 @@ namespace net
 					logging_prefix = COLOR_WHITE COLOR_FAINT "[UNDEFINED]" COLOR_RESET COLOR_WHITE;
 			}
 			::fprintf(stream, COLOR_RESET "%s %s" COLOR_RESET "\n", logging_prefix.c_str(), message);
+		}
+		
+		inline static void socket_set_send_timeout(SOCKET sock, long long int ms)
+		{
+			timeval timeoutdata{ms / 1000, (ms % 1000) * 1000};
+			setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const void*)&timeoutdata, sizeof(timeoutdata));
+		}
+		
+		inline static void socket_set_receive_timeout(SOCKET sock, long long int ms)
+		{
+			timeval timeoutdata{ms / 1000, (ms % 1000) * 1000};
+			setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const void*)&timeoutdata, sizeof(timeoutdata));
 		}
 	}
 	
@@ -174,7 +187,7 @@ namespace net
 		
 		[[nodiscard]] inline in_port_t get_port() const
 		{
-			return ::htons(address.sin_port);
+			return ::ntohs(address.sin_port);
 		}
 	
 	private:
@@ -201,7 +214,7 @@ namespace net
 				const inet_address& address, const std::string& data,
 				const inet_address* proxy, int proxytype = PROXYSOCKET_TYPE_NONE, const char* proxy_user = "", const char* proxy_password = "",
 				bool debug = false)
-				: address(address), socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP))
+				: address(address), socket(::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP))
 		{
 			proxysocketconfig proxysock_cfg;
 			if (proxy)
@@ -221,11 +234,21 @@ namespace net
 			}
 			else
 			{
+				if (socket < 0)
+				{
+					status = r_failed;
+					return;
+				}
+				
+				int on = 1;
+				::setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&on), sizeof on);
+				
 				if (debug)
-					::fprintf(
-							stdout, "Connecting to the server %s:%hu... Sock = %d. Addr = %d.\n",
+					::printf(
+							"Connecting to the server %s:%hu... Sock = %d. Addr = %d.\n",
 							address.get_ip().c_str(), address.get_port(), socket, address.address.sin_addr.s_addr
 					);
+				
 				if (::connect(socket, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 				{
 					status = r_failed;
@@ -234,35 +257,31 @@ namespace net
 			}
 			
 			if (debug)
-				::fprintf(stdout, "Sending data to %s:%hu...\n", address.get_ip().c_str(), address.get_port());
-			if (::send(socket, data.c_str(), data.size(), 0) < 0)
+				::printf("Sending data to %s:%hu...\n", address.get_ip().c_str(), address.get_port());
+			if (::send(socket, data.c_str(), data.size(), 0) <= 0)
 			{
 				status = r_failed;
 				return;
 			}
 			
+			__detail__::socket_set_receive_timeout(socket, 1000);
 			status = r_read_failed;
-			char tmp;
-			size_t recved;
+			std::array<char, 128> tmp{ };
+			ssize_t recved;
 			if (debug)
-				printf("received = R\"(");
-			::pthread_mutex_lock(&mutex);
-			for (size_t i = 0; ((recved = ::recv(socket, &tmp, sizeof tmp, MSG_DONTWAIT) >= 0) ||
-								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
+				::printf("received = R\"(");
+			for (size_t i = 0; ((recved = ::recv(socket, tmp.data(), tmp.size(), 0)) >= 0 || errno == EAGAIN) && i < MAX_QUERIES; ++i)
 			{
-				::pthread_mutex_unlock(&mutex);
 				::usleep(1000);
-				if (debug)
-					if (recved > 0)
-					{
-						printf("\\%x", tmp);
-						status = r_success;
-					}
-				::pthread_mutex_lock(&mutex);
+				if (debug && recved > 0)
+				{
+					for (size_t j = 0; j < recved; ++j)
+						::printf("%c", tmp[j]);
+					status = r_success;
+				}
 			}
-			::pthread_mutex_unlock(&mutex);
 			if (debug)
-				printf(")\"\n");
+				::printf(")\"\n");
 		}
 		
 		inline operator decltype(r_failed)()
@@ -285,29 +304,33 @@ namespace net
 	{
 	public:
 		inline udp_flood(const inet_address& address, const std::string& data, bool debug = false)
-				: address(address), socket(::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP))
+				: address(address), socket(::socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP))
 		{
 			if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
 				status = r_failed;
-
-//			::sleep(1);
-
-//			char tmp[128];
-//			auto addr = address.address;
-//			socklen_t len;
-//			size_t recved;
-//			if (debug)
-//				std::cout << "data = R\"(";
-//			for (size_t i = 0; ((recved = ::recvfrom(socket, tmp, 128, 0, reinterpret_cast<sockaddr*>(&addr), &len)) >= 0 ||
-//								errno == EWOULDBLOCK || errno == EAGAIN) && i < MAX_QUERIES; ++i)
-//			{
-//				::usleep(1000);
-//				if (debug)
-//					std::cout.write(tmp, recved);
-//			}
-//			if (debug)
-//				std::cout << ")\"\n";
-//			std::cout.flush();
+			
+			__detail__::socket_set_receive_timeout(socket, 1000);
+			status = r_read_failed;
+			std::array<char, 128> tmp{ };
+			sockaddr_in addr{ };
+			socklen_t sz;
+			ssize_t recved;
+			if (debug)
+				printf("received = R\"(");
+			for (size_t i = 0; (recved = ::recvfrom(socket, tmp.data(), tmp.size(), 0, reinterpret_cast<struct sockaddr*>(&addr), &sz)) >= 0
+							   && addr.sin_addr.s_addr != INADDR_ANY && i < MAX_QUERIES; ++i)
+			{
+				::usleep(1000);
+				if (debug && recved > 0)
+				{
+					for (size_t j = 0; j < recved; ++j)
+						printf("\\%c", tmp[j]);
+					status = r_success;
+					--i;
+				}
+			}
+			if (debug)
+				printf(")\"\n");
 		}
 		
 		inline operator decltype(r_failed)()

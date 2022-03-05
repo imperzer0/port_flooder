@@ -88,10 +88,19 @@ void* flood_thread(void*)
 			method = "UDP";
 			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), debug);
 			::pthread_mutex_lock(&mutex);
-			if (flood)
+			if (flood == net::r_success)
+			{
 				++sent_requests;
+			}
+			else if (flood == net::r_read_failed)
+			{
+				++sent_requests;
+				++failed_reads;
+			}
 			else
+			{
 				++failed_requests;
+			}
 			::pthread_mutex_unlock(&mutex);
 		}
 		else // tcp
@@ -102,11 +111,11 @@ void* flood_thread(void*)
 					proxy_address, proxy_type, proxy_user, proxy_password, debug
 			);
 			::pthread_mutex_lock(&mutex);
-			if (flood == 1)
+			if (flood == net::r_success)
 			{
 				++sent_requests;
 			}
-			else if (flood == 2)
+			else if (flood == net::r_read_failed)
 			{
 				++sent_requests;
 				++failed_reads;
