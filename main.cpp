@@ -33,8 +33,8 @@
         "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | noresponse " COLOR_YELLOW "%d" COLOR_RESET \
         " | running threads %d\n"
 
-#define HUGE_BUFFER_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu." COLOR_RESET
-#define COULDNT_OPEN_FILE_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s" COLOR_RESET
+#define HUGE_BUFFER_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu.\n" COLOR_RESET
+#define COULDNT_OPEN_FILE_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s\n" COLOR_RESET
 
 static const char* appname;
 static const char* send_data = nullptr;
@@ -47,6 +47,7 @@ static std::string method;
 static bool debug = false;
 static std::string target_address_str;
 static net::inet_address* target_address = nullptr;
+static std::string proxy_address_str;
 static net::inet_address* proxy_address = nullptr;
 static int proxy_type = PROXYSOCKET_TYPE_NONE;
 static const char* proxy_user = "";
@@ -155,9 +156,8 @@ int main(int argc, char** argv)
 			
 			case 't':
 			{
-				auto addr_str = std::string(optarg);
-				for (char& i: addr_str) i = std::tolower(i);
-				target_address_str = addr_str;;
+				target_address_str = optarg;
+				for (char& i: target_address_str) i = std::tolower(i);
 				break;
 			}
 			
@@ -187,9 +187,7 @@ int main(int argc, char** argv)
 			
 			case 'p':
 			{
-				auto addr_str = std::string(optarg);
-				for (char& i: addr_str) i = std::tolower(i);
-				proxy_address = new net::inet_address(addr_str);
+				proxy_address_str = optarg;
 				break;
 			}
 			
@@ -197,7 +195,7 @@ int main(int argc, char** argv)
 			{
 				auto sockver_str = std::string(optarg);
 				for (char& i: sockver_str) i = std::toupper(i);
-				proxy_type = proxysocketconfig_get_name_type(sockver_str.c_str());
+				proxy_type = net::proxysocketconfig_get_name_type(sockver_str.c_str());
 				break;
 			}
 			
@@ -222,14 +220,74 @@ int main(int argc, char** argv)
 			default: // '?'
 			{
 				::printf(HELP, appname);
-				::exit(0);
+				::exit(-2);
 			}
 		}
 	}
 	
 	if (!target_address_str.empty())
 	{
-		target_address = new net::inet_address(target_address_str, proxy_address == nullptr);
+		target_address = new net::inet_address(target_address_str, false);
+	}
+	else
+	{
+		::printf(HELP, appname);
+		::exit(-1);
+	}
+	
+	if (!proxy_address_str.empty())
+	{
+		FILE* file = ::fopen(proxy_address_str.c_str(), "rb");
+		if (file)
+		{
+			::printf(COLOR_BLUE "Scanning proxies from " COLOR_MAGENTA "\"%s\"" COLOR_BLUE "...\n" COLOR_RESET, proxy_address_str.c_str());
+			::srandom(::time(nullptr) + ::clock());
+			char ip[ADDRESS_MAX_LEN + 1];
+			proxy_address = nullptr;
+			while (::fgets(ip, ADDRESS_MAX_LEN, file))
+			{
+				ip[::strlen(ip) - 1] = 0;
+				if (ip[0] == 0) continue;
+				size_t ws = 0;
+				while (ip[ws] == ' ') ++ws;
+				proxy_address = new net::inet_address(ip + ws);
+				if (net::is_address_available_through_proxy(*target_address, *proxy_address, proxy_type, proxy_user, proxy_password, debug))
+				{
+					if (!(::random() % 10))
+						break;
+				}
+				else
+				{
+					delete proxy_address;
+					proxy_address = nullptr;
+				}
+			}
+			if (proxy_address)
+			{
+				::printf(
+						COLOR_GREEN "Selected proxy " COLOR_MAGENTA "\"%s:%hu\"" COLOR_GREEN "." COLOR_RESET "\n",
+						proxy_address->get_ip().c_str(), proxy_address->get_port());
+			}
+			else
+			{
+				::fprintf(stderr, COLOR_RED COLOR_INTENSE "Selected no proxy from file \"%s\"!!!" COLOR_RESET "\n", proxy_address_str.c_str());
+			}
+		}
+		else
+		{
+			proxy_address = new net::inet_address(proxy_address_str);
+		}
+	}
+	
+	if (!target_address_str.empty())
+	{
+		delete target_address;
+		target_address = new net::inet_address(target_address_str, false);
+	}
+	else
+	{
+		::printf(HELP, appname);
+		::exit(-1);
 	}
 	
 	if (debug)

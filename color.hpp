@@ -28,10 +28,12 @@
 #define COLOR_BLACK "\033[30m"
 // foreground color
 #define COLOR_RED "\033[31m"
+#define COLOR_SEPAR COLOR_RED
 // foreground color
 #define COLOR_GREEN "\033[32m"
 // foreground color
 #define COLOR_YELLOW "\033[33m"
+#define COLOR_HERO COLOR_YELOW
 // foreground color
 #define COLOR_BLUE "\033[34m"
 // foreground color

