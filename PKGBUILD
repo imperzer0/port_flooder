@@ -1,12 +1,12 @@
 pkgname="port-flooder"
 epoch=1
-pkgver=0
+pkgver=1
 pkgrel=0
 pkgdesc="port ddos application"
 arch=("x86_64")
 url="https://github.com/imperzer0/port_flooder"
 license=('GPL')
-depends=()
+depends=("execute-process-linux>=2.5-0")
 makedepends=("cmake>=3.0")
 
 libfiles=("CMakeLists.txt" "main.cpp" "network.hpp" "proxysocks.hpp" "color.hpp")

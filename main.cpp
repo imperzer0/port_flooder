@@ -1,5 +1,6 @@
 #include "network.hpp"
 #include "color.hpp"
+#include "hmlexecutor.hpp"
 
 #include <getopt.h>
 #include <sys/stat.h>
@@ -94,14 +95,19 @@ void* flood_thread(void*)
 			{
 				struct stat st{ };
 				::stat(data_file.c_str(), &st);
-				FILE* file = ::fopen(data_file.c_str(), "rb");
+				FILE* inp = ::fopen(data_file.c_str(), "rb");
+				auto compiled_data = data_file + ".compiled";
+				FILE* out = ::fopen(compiled_data.c_str(), "wb");
+				hml::compiler cmpl(inp, out);
+				cmpl.compile();
+				FILE* file = ::fopen(compiled_data.c_str(), "rb");
 				if (file)
 				{
 					flood = std::make_unique<net::udp_flood>(*target_address, net::file_sender(file), debug);
 				}
 				else
 				{
-					::fprintf(stderr, COULDNT_OPEN_FILE_FMT, data_file.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
+					::fprintf(stderr, COULDNT_OPEN_FILE_FMT, compiled_data.c_str(), ::strerrorname_np(errno), ::strerrordesc_np(errno));
 					::exit(errno);
 				}
 			}
@@ -324,7 +330,7 @@ int main(int argc, char** argv)
 	if (!target_address_str.empty())
 	{
 		delete target_address;
-		target_address = new net::inet_address(target_address_str, false);
+		target_address = new net::inet_address(target_address_str, proxy_address == nullptr);
 	}
 	else
 	{
