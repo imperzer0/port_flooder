@@ -387,7 +387,7 @@ namespace net
 			std::array<char, 128> tmp{ };
 			ssize_t recved;
 			if (debug)
-				::printf("received = R\"(");
+				printf(COLOR_MAGENTA "received = R\"(" COLOR_BLUE);
 			for (size_t i = 0; ((recved = ::recv(socket, tmp.data(), tmp.size(), 0)) >= 0 || errno == EAGAIN) && i < MAX_QUERIES; ++i)
 			{
 				::usleep(1000);
@@ -399,7 +399,7 @@ namespace net
 				}
 			}
 			if (debug)
-				::printf(")\"\n");
+				printf(COLOR_MAGENTA ")\"" COLOR_RESET "\n");
 		}
 		
 		inline operator decltype(r_failed)()
@@ -434,7 +434,7 @@ namespace net
 			socklen_t sz;
 			ssize_t recved;
 			if (debug)
-				printf("received = R\"(");
+				printf(COLOR_MAGENTA "received = R\"(" COLOR_BLUE);
 			for (size_t i = 0; (recved = ::recvfrom(socket, tmp.data(), tmp.size(), 0, reinterpret_cast<struct sockaddr*>(&addr), &sz)) >= 0
 							   && addr.sin_addr.s_addr != INADDR_ANY && i < MAX_QUERIES; ++i)
 			{
@@ -448,7 +448,7 @@ namespace net
 				}
 			}
 			if (debug)
-				printf(")\"\n");
+				printf(COLOR_MAGENTA ")\"" COLOR_RESET "\n");
 		}
 		
 		inline operator decltype(r_failed)()
