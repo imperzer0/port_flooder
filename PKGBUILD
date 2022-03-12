@@ -9,7 +9,7 @@ license=('GPL')
 depends=("execute-process-linux>=2.5-0")
 makedepends=("cmake>=3.0")
 
-libfiles=("CMakeLists.txt" "main.cpp" "network.hpp" "proxysocks.hpp" "color.hpp")
+libfiles=("CMakeLists.txt" "main.cpp" "network.hpp" "proxysocks.hpp" "color.hpp" "hmlexecutor.hpp")
 
 for libfile in ${libfiles[@]}
 {
