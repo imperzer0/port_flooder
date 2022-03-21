@@ -29,7 +29,7 @@ git clone https://github.com/imperzer0/port_flooder.git
 
 ```bash
 cd port_flooder
-makepkg -sif
+rm *.pkg.tar.zst; rm -rf pkg/ src/; makepkg -sif
 ```
 
 <h2>Other distributions</h2>
