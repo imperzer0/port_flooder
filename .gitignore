@@ -4,3 +4,5 @@
 /src/
 /*.pkg.tar.zst
 /port-flooder
+/Dockerfile
+/Dockerfile_old
