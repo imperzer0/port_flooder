@@ -3,5 +3,5 @@
 /pkg/
 /src/
 /*.pkg.tar.zst
-/port-flooder
+/port_flooder
 *.compiled

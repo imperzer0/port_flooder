@@ -33,32 +33,59 @@ namespace hml
 				std::array<char, 128> line{ };
 				int actual_size;
 				char* argv[]CMD_LINE(shell);
+				std::string command;
+				bool substitution = false;
 				while (::fgets(line.data(), line.size(), input))
 				{
 					actual_size = (int)::strlen(line.data());
 					int prev_end = 0, i = 0, j;
 					while (i < actual_size)
 					{
-						++i;
-						for (; i < actual_size && !((i < 2 || line[i - 2] != '\\') && line[i - 1] == '$' && line[i] == ' '); ++i);
-						for (j = i; j < actual_size && !(line[j - 1] == ' ' && line[j] == '$'); ++j);
+						bool local_substitution = substitution;
 						
-						std::string line_str = std::string(line.data()).substr(prev_end, i - (i != j) - prev_end);
-						boost::replace_all(line_str, "\\$", "$");
-						boost::replace_all(line_str, "\\\\", "\\");
-						
-						if (::fwrite(line_str.c_str(), sizeof(char), line_str.size(), output) != line_str.size())
+						if (!substitution)
 						{
-							::fprintf(stderr, WRITE_FAILED_FMT);
-							return;
+							++i;
+							for (; i < actual_size; ++i)
+								if ((i < 2 || line[i - 2] != '\\') && line[i - 1] == '$' && line[i] == ' ')
+								{
+									local_substitution = true;
+									break;
+								}
 						}
-						if (j - i > 2)
+						else
 						{
-							auto tmp = std::string(j - i - 1, 0);
-							::strncpy(tmp.data(), line.data() + i + 1, j - i - 2);
-							boost::replace_all(tmp, "\\&", "&");
-							boost::replace_all(tmp, "\\\\", "\\");
-							argv[PLACEHOLDER_INDEX] = tmp.data();
+							--i;
+						}
+						
+						
+						for (j = i; j < actual_size; ++j)
+							if (line[j - 1] == ' ' && line[j] == '$')
+							{
+								local_substitution = false;
+								break;
+							}
+						
+						if (!substitution)
+						{
+							std::string line_str = std::string(line.data()).substr(prev_end, i - (i != j) - prev_end);
+							boost::replace_all(line_str, "\\$", "$");
+							boost::replace_all(line_str, "\\\\", "\\");
+							if (::fwrite(line_str.c_str(), sizeof(char), line_str.size(), output) != line_str.size())
+							{
+								::fprintf(stderr, WRITE_FAILED_FMT);
+								return;
+							}
+						}
+						
+						if (j - i > 2)
+							command += std::string(line.data() + i + 1, line.data() + j - (j < actual_size));
+						
+						if (j < actual_size && !local_substitution)
+						{
+							boost::replace_all(command, "\\$", "$");
+							boost::replace_all(command, "\\\\", "\\");
+							argv[PLACEHOLDER_INDEX] = command.data();
 							int p[2];
 							::pipe(p);
 							auto pid = exec::execute_program(argv, nullptr, exec::std_out.redirect_to(p[exec::pipe::write]));
@@ -71,25 +98,74 @@ namespace hml
 							
 							FILE* stdout_stream = ::fdopen(p[exec::pipe::read], "rb");
 							std::array<char, 128> stdoutline{ };
+							bool lastendl = false;
 							while (::fgets(stdoutline.data(), stdoutline.size(), stdout_stream))
 							{
 								size_t size = ::strlen(stdoutline.data());
-								if (stdoutline[size - 1] == '\n')
-									--size;
+								lastendl = stdoutline[size - 1] == '\n';
 								if (::fwrite(stdoutline.data(), sizeof(char), size, output) != size)
 								{
 									::fprintf(stderr, WRITE_FAILED_FMT);
 									return;
 								}
 							}
+							if (lastendl)
+								::fseek(output, -1, SEEK_CUR);
 							::close(p[exec::pipe::read]);
+							command.clear();
 						}
+						
 						i = prev_end = j + 1;
+						substitution = local_substitution;
 					}
 				}
 				::fclose(input);
 				::fclose(output);
 			}
+		}
+		
+		bool check()
+		{
+			if (input)
+			{
+				std::array<char, 128> line{ };
+				int actual_size;
+				bool substitution = false;
+				while (::fgets(line.data(), line.size(), input))
+				{
+					actual_size = (int)::strlen(line.data());
+					int i = 0, j;
+					while (i < actual_size)
+					{
+						if (!substitution)
+						{
+							++i;
+							for (; i < actual_size; ++i)
+								if ((i < 2 || line[i - 2] != '\\') && line[i - 1] == '$' && line[i] == ' ')
+								{
+									substitution = true;
+									break;
+								}
+						}
+						else
+						{
+							--i;
+						}
+						
+						for (j = i; j < actual_size; ++j)
+							if (line[j - 1] == ' ' && line[j] == '$')
+							{
+								substitution = false;
+								break;
+							}
+						
+						i = j + 1;
+					}
+				}
+				::fclose(input);
+				return !substitution;
+			}
+			return false;
 		}
 	
 	private:
